@@ -113,7 +113,7 @@ namespace Sigma {
 		frame.m_renderTarget = m_renderTargets[m_currentBuffer];
 		frame.m_renderTargetsHandle = m_renderTargetsHandles[m_currentBuffer];
 
-		// Make sure GPU is done with our previous usage of this command allocator before flushing it
+		// Make sure GPU is done with our previous usage of this command allocator before resetting it
 		// This assumes that command allocators are used in order, and their command lists are executed when the
 		// GPU reach the end of the frame fence
 		if (frame.m_fenceValue >= kNumFrames && m_endOfFrameFence->GetCompletedValue() < frame.m_fenceValue - kNumFrames)
