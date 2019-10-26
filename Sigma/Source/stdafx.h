@@ -21,5 +21,6 @@
 
 #include <d3d12.h>
 #include <dxgi1_6.h>
+#include <dxgidebug.h>
 #define USE_PIX
 #include "pix3.h"

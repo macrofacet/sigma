@@ -81,7 +81,7 @@ namespace Sigma {
 				if (msg.message == WM_QUIT)
 					running = false;
 			}
-
+			
 			if (m_windowWidth != m_bufferWidth || m_windowHeight != m_bufferHeight)
 			{
 				ResizeSwapChainBuffers();
@@ -188,7 +188,16 @@ namespace Sigma {
 		ComPtr<ID3D12Debug> debugController;
 		D3D12GetDebugInterface(__uuidof(ID3D12Debug), (void**)debugController.GetAddressOf());
 		debugController->EnableDebugLayer();
+
 		dxgiFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
+
+		ComPtr<IDXGIInfoQueue> dxgiInfoQueue;
+		DXGIGetDebugInterface1(0, IID_PPV_ARGS(dxgiInfoQueue.GetAddressOf()));
+		dxgiInfoQueue->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR, true);
+		dxgiInfoQueue->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION, true);
+
+		
+		
 #endif
 
 		ComPtr<IDXGIFactory3> factory;
@@ -203,13 +212,13 @@ namespace Sigma {
 			adapters.push_back(adapter);
 			++i;
 		}
-		
+
 		ComPtr<IDXGIAdapter3> selectedAdapter = nullptr;
 		for (auto adapter : adapters)
 		{
 			unsigned int i = 0;
 			ComPtr<IDXGIOutput> output;
-			while (adapter->EnumOutputs(i, output.GetAddressOf()) != DXGI_ERROR_NOT_FOUND)
+			while (adapter->EnumOutputs(i, &output) != DXGI_ERROR_NOT_FOUND)
 			{
 				ComPtr<IDXGIOutput6> output6;
 				output->QueryInterface(__uuidof(IDXGIOutput6), (void**)output6.GetAddressOf());
@@ -234,15 +243,14 @@ namespace Sigma {
 			selectedAdapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &memoryInfo);
 			std::cout << memoryInfo.Budget << std::endl;
 		}
-
 		// Create logical device
-		D3D12CreateDevice(selectedAdapter.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), (void**)&m_device);
-
+		D3D12CreateDevice(selectedAdapter.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), (void**)m_device.GetAddressOf());
+		
 		// Create command queue
 		D3D12_COMMAND_QUEUE_DESC commandQueueDesc = {};
 		commandQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
 		commandQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-		m_device->CreateCommandQueue(&commandQueueDesc, __uuidof(ID3D12CommandQueue), (void**)&m_commandQueue);
+		m_device->CreateCommandQueue(&commandQueueDesc, __uuidof(ID3D12CommandQueue), (void**)m_commandQueue.GetAddressOf());
 
 		// Create swap chain, aiming for minimum latency with a waitable object and two frame buffer
 		m_bufferWidth = m_windowWidth;
@@ -305,14 +313,14 @@ namespace Sigma {
 		m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), (void**)m_endOfFrameFence.GetAddressOf());
 		m_lastSubmittedFrameFenceValue = 0;
 		m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-
+	
 		// Special fence whenever we need to wait for the GPU to complete everything so far (including Present)
 		m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), (void**)m_haltFence.GetAddressOf());
 		m_haltFenceValue = 0;
 		m_haltFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
 		m_currentFrame = m_swapChain->GetCurrentBackBufferIndex();
-		m_frameCounter = 0;
+		m_frameCounter = 0;			
 	}
 
 	void Game::CleanD3D()
