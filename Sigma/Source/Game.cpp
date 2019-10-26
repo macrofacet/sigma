@@ -186,13 +186,13 @@ namespace Sigma {
 
 #ifdef _DEBUG
 		ComPtr<ID3D12Debug> debugController;
-		D3D12GetDebugInterface(__uuidof(ID3D12Debug), (void**)debugController.GetAddressOf());
+		D3D12GetDebugInterface(IID_PPV_ARGS(&debugController));
 		debugController->EnableDebugLayer();
 
 		dxgiFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
 
 		ComPtr<IDXGIInfoQueue> dxgiInfoQueue;
-		DXGIGetDebugInterface1(0, IID_PPV_ARGS(dxgiInfoQueue.GetAddressOf()));
+		DXGIGetDebugInterface1(0, IID_PPV_ARGS(&dxgiInfoQueue));
 		dxgiInfoQueue->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR, true);
 		dxgiInfoQueue->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION, true);
 
@@ -201,7 +201,7 @@ namespace Sigma {
 #endif
 
 		ComPtr<IDXGIFactory3> factory;
-		CreateDXGIFactory2(dxgiFactoryFlags, __uuidof(IDXGIFactory3), (void**)factory.GetAddressOf());
+		CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&factory));
 
 		// Enumerate all adapters
 		unsigned i = 0;
@@ -221,14 +221,14 @@ namespace Sigma {
 			while (adapter->EnumOutputs(i, &output) != DXGI_ERROR_NOT_FOUND)
 			{
 				ComPtr<IDXGIOutput6> output6;
-				output->QueryInterface(__uuidof(IDXGIOutput6), (void**)output6.GetAddressOf());
+				output->QueryInterface(IID_PPV_ARGS(&output6));
 				++i;
 			}
 
 			// TODO : Some filtering here
 			if (true)
 			{
-				adapter->QueryInterface(__uuidof(IDXGIAdapter3), (void**)selectedAdapter.GetAddressOf());
+				adapter->QueryInterface(IID_PPV_ARGS(&selectedAdapter));
 				break;
 			}
 		}
@@ -244,13 +244,13 @@ namespace Sigma {
 			std::cout << memoryInfo.Budget << std::endl;
 		}
 		// Create logical device
-		D3D12CreateDevice(selectedAdapter.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), (void**)m_device.GetAddressOf());
+		D3D12CreateDevice(selectedAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_device));
 		
 		// Create command queue
 		D3D12_COMMAND_QUEUE_DESC commandQueueDesc = {};
 		commandQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
 		commandQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-		m_device->CreateCommandQueue(&commandQueueDesc, __uuidof(ID3D12CommandQueue), (void**)m_commandQueue.GetAddressOf());
+		m_device->CreateCommandQueue(&commandQueueDesc, IID_PPV_ARGS(&m_commandQueue));
 
 		// Create swap chain, aiming for minimum latency with a waitable object and two frame buffer
 		m_bufferWidth = m_windowWidth;
@@ -283,14 +283,14 @@ namespace Sigma {
 		rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 		rtvHeapDesc.NodeMask = 0;
 		rtvHeapDesc.NumDescriptors = kNumBuffers;
-		m_device->CreateDescriptorHeap(&rtvHeapDesc, __uuidof(ID3D12DescriptorHeap), (void**)m_rtvHeap.GetAddressOf());
+		m_device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&m_rtvHeap));
 
 		unsigned rtvDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 		D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
 
 		for (int i = 0; i < kNumBuffers; i++)
 		{
-			m_swapChain->GetBuffer(i, __uuidof(ID3D12Resource), (void**)m_renderTargets[i].GetAddressOf());
+			m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_renderTargets[i]));
 			m_device->CreateRenderTargetView(m_renderTargets[i].Get(), nullptr, rtvHandle);
 			m_renderTargetsHandles[i] = rtvHandle;
 			rtvHandle.ptr += rtvDescriptorSize;
@@ -303,19 +303,19 @@ namespace Sigma {
 		for (int i = 0; i < kNumFrames; i++)
 		{			
 			// Create command allocator
-			m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, __uuidof(ID3D12CommandAllocator), (void**)m_commandAllocators[i].GetAddressOf());
+			m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_commandAllocators[i]));
 
-			m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_commandAllocators[i].Get(), nullptr, __uuidof(ID3D12GraphicsCommandList), (void**)m_commandLists[i].GetAddressOf());
+			m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_commandAllocators[i].Get(), nullptr, IID_PPV_ARGS(&m_commandLists[i]));
 			m_commandLists[i]->Close();
 		}
 
 		// Fence inserted at the end of the frame (before Present)
-		m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), (void**)m_endOfFrameFence.GetAddressOf());
+		m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_endOfFrameFence));
 		m_lastSubmittedFrameFenceValue = 0;
 		m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 	
 		// Special fence whenever we need to wait for the GPU to complete everything so far (including Present)
-		m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), (void**)m_haltFence.GetAddressOf());
+		m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_haltFence));
 		m_haltFenceValue = 0;
 		m_haltFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
@@ -357,7 +357,7 @@ namespace Sigma {
 
 		for (int i = 0; i < kNumBuffers; i++)
 		{
-			m_swapChain->GetBuffer(i, __uuidof(ID3D12Resource), (void**)m_renderTargets[i].GetAddressOf());
+			m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_renderTargets[i]));
 			m_device->CreateRenderTargetView(m_renderTargets[i].Get(), nullptr, rtvHandle);
 			m_renderTargetsHandles[i] = rtvHandle;
 			rtvHandle.ptr += rtvDescriptorSize;
