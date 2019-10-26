@@ -5,6 +5,9 @@ For the moment, it is Windows 10 & D3D12 only.
 
 ## Timeline
 ### Basis
+- VS project setup
+- Command line arguments
+- External configuration
 - Initialize Window
 - Initialize DirectX
     - Debug layer
@@ -17,6 +20,7 @@ For the moment, it is Windows 10 & D3D12 only.
 - File loading?
 - Jobs/Multithreading
 - CPU Memory management
+- Console commands/IMGUI
 
 ### Triangle/Quad
 - Pipeline state object
@@ -24,6 +28,7 @@ For the moment, it is Windows 10 & D3D12 only.
     - Caching?
 - Resource binding
     - Resource transitions
+    - Descriptor management
 - Frame graph?
 - GPU Memory management
 - Basic Triangle/Quad helpers

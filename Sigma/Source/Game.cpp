@@ -3,8 +3,6 @@
 #include "Defines.h"
 
 
-#define MAX_LOADSTRING 100
-
 namespace Sigma {
 
 	Game::Game(std::string title, int width, int height, HINSTANCE hInstance) : 
@@ -98,7 +96,7 @@ namespace Sigma {
 
 	Frame Game::GetNewFrame()
 	{
-		PIXScopedEvent(PIX_COLOR_INDEX(1), "NewFrame");
+		PIXScopedEvent(PIX_COLOR_INDEX(1), "New frame");
 		
 		{
 			PIXScopedEvent(PIX_COLOR_INDEX(2), "Waiting for free back buffer");
@@ -135,7 +133,7 @@ namespace Sigma {
 	{
 		PIXBeginEvent(m_commandQueue.Get(), PIX_COLOR_INDEX(0), "Frame %d", m_frameCounter);
 		Frame frame = GetNewFrame();
-		PIXBeginEvent(frame.m_commandList.Get(), PIX_COLOR_INDEX(0), "Frame %d", m_frameCounter);
+		PIXBeginEvent(frame.m_commandList.Get(), PIX_COLOR_INDEX(0), "CMDList %d", frame.m_commandList.Get());
 	
 		{
 			D3D12_RESOURCE_TRANSITION_BARRIER transition = {};
@@ -184,7 +182,6 @@ namespace Sigma {
 
 	void Game::SetupD3D()
 	{
-
 		unsigned int dxgiFactoryFlags = 0;
 
 #ifdef _DEBUG
@@ -247,6 +244,7 @@ namespace Sigma {
 		commandQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 		m_device->CreateCommandQueue(&commandQueueDesc, __uuidof(ID3D12CommandQueue), (void**)&m_commandQueue);
 
+		// Create swap chain, aiming for minimum latency with a waitable object and two frame buffer
 		m_bufferWidth = m_windowWidth;
 		m_bufferHeight = m_windowHeight;
 		DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
@@ -271,14 +269,13 @@ namespace Sigma {
 		m_swapChain->SetMaximumFrameLatency(kNumFrames);
 		m_swapChainWait = m_swapChain->GetFrameLatencyWaitableObject();
 
+		// Create render target views for the swap chain buffers
 		D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
 		rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 		rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 		rtvHeapDesc.NodeMask = 0;
 		rtvHeapDesc.NumDescriptors = kNumBuffers;
 		m_device->CreateDescriptorHeap(&rtvHeapDesc, __uuidof(ID3D12DescriptorHeap), (void**)m_rtvHeap.GetAddressOf());
-
-		
 
 		unsigned rtvDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 		D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
@@ -291,6 +288,10 @@ namespace Sigma {
 			rtvHandle.ptr += rtvDescriptorSize;
 		}
 
+		// Create a command allocator for each frame (and a command list - we could create more than one)
+		// Command Allocator needs to be alive as long as the GPU is using it,
+		// so if we want two frames, we need one command allocator for the in-flight frame
+		// and one for the one we are building now
 		for (int i = 0; i < kNumFrames; i++)
 		{			
 			// Create command allocator
@@ -300,10 +301,12 @@ namespace Sigma {
 			m_commandLists[i]->Close();
 		}
 
+		// Fence inserted at the end of the frame (before Present)
 		m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), (void**)m_endOfFrameFence.GetAddressOf());
 		m_lastSubmittedFrameFenceValue = 0;
 		m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
+		// Special fence whenever we need to wait for the GPU to complete everything so far (including Present)
 		m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), (void**)m_haltFence.GetAddressOf());
 		m_haltFenceValue = 0;
 		m_haltFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
@@ -319,6 +322,8 @@ namespace Sigma {
 
 	void Game::ResizeSwapChainBuffers()
 	{
+		// To resize the swap chain buffers, we need to stop submitting commands to their
+		// associated command allocators and wait for the GPU to finish everything (including Present call)
 		WaitForGPU();
 		
 		for (int i = 0; i < kNumFrames; i++)
@@ -354,6 +359,7 @@ namespace Sigma {
 		m_currentBuffer = m_swapChain->GetCurrentBackBufferIndex();
 	}
 
+	// Blocking call - Waits for the GPU to complete all of its work submitted until now
 	void Game::WaitForGPU()
 	{
 		m_commandQueue->Signal(m_haltFence.Get(), ++m_haltFenceValue);
@@ -362,6 +368,7 @@ namespace Sigma {
 		{
 			m_haltFence->SetEventOnCompletion(m_haltFenceValue, m_haltFenceEvent);
 			WaitForSingleObject(m_haltFenceEvent, INFINITE);
+			PIXNotifyWakeFromFenceSignal(m_haltFenceEvent);
 		}
 	}
 
@@ -411,7 +418,9 @@ namespace Sigma {
 			UINT8 keyCode = static_cast<UINT8>(wParam);
 			if (keyCode == VK_SPACE)
 			{
-				m_swapChain->SetFullscreenState(true, nullptr);
+				BOOL fullscreenState = false;
+				m_swapChain->GetFullscreenState(&fullscreenState, nullptr);
+				m_swapChain->SetFullscreenState(!fullscreenState, nullptr);
 			}
 			break;
 		}
