@@ -149,8 +149,33 @@ namespace Sigma {
 			frame.m_commandList->ResourceBarrier(1, &barrier);
 		}
 
+		frame.m_commandList->OMSetRenderTargets(1, &frame.m_renderTargetsHandle, FALSE, nullptr);
+
 		const float clearColor[4] = { 1.0f, 1.0f, 0.f, 1.0f };
 		frame.m_commandList->ClearRenderTargetView(frame.m_renderTargetsHandle, clearColor, 0, nullptr);
+		
+		D3D12_VIEWPORT viewport;
+		viewport.Height = (float)m_bufferHeight;
+		viewport.Width = (float)m_bufferWidth;
+		viewport.TopLeftX = 0;
+		viewport.TopLeftY = 0;
+		viewport.MinDepth = 0;
+		viewport.MaxDepth = 1.0f;
+
+		D3D12_RECT scissorRect;
+		scissorRect.top = 0;
+		scissorRect.bottom = m_bufferHeight;
+		scissorRect.left = 0;
+		scissorRect.right = m_bufferWidth;
+
+		frame.m_commandList->RSSetViewports(1, &viewport);
+		frame.m_commandList->RSSetScissorRects(1, &scissorRect);
+
+		frame.m_commandList->SetPipelineState(m_pipelineState.Get());
+		frame.m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
+		frame.m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		frame.m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
+		frame.m_commandList->DrawInstanced(3, 1, 0, 0);
 
 		{
 			D3D12_RESOURCE_TRANSITION_BARRIER transition = {};
@@ -320,7 +345,118 @@ namespace Sigma {
 		m_haltFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
 		m_currentFrame = m_swapChain->GetCurrentBackBufferIndex();
-		m_frameCounter = 0;			
+		m_frameCounter = 0;		
+
+
+
+		// CREATE RESOURCES
+
+		D3D12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
+		rootSignatureDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+		rootSignatureDesc.Desc_1_1.NumParameters = 0;
+		rootSignatureDesc.Desc_1_1.NumStaticSamplers = 0;
+		rootSignatureDesc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+		ComPtr<ID3DBlob> outputBlob;
+		ComPtr<ID3DBlob> errorBlob;
+		D3D12SerializeVersionedRootSignature(&rootSignatureDesc, &outputBlob, &errorBlob);
+		m_device->CreateRootSignature(0, outputBlob->GetBufferPointer(), outputBlob->GetBufferSize(), IID_PPV_ARGS(&m_rootSignature));
+
+		D3D12_INPUT_ELEMENT_DESC inputDesc = {};
+		inputDesc.SemanticName = "POSITION";
+		inputDesc.SemanticIndex = 0;
+		inputDesc.Format = DXGI_FORMAT_R32G32B32_FLOAT;
+		inputDesc.InputSlot = 0;
+		inputDesc.AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
+		inputDesc.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+		inputDesc.InstanceDataStepRate = 0;
+		
+		HANDLE hFile = CreateFile("PixelShader.cso", GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+		LARGE_INTEGER  size;
+		GetFileSizeEx(hFile, &size);
+		std::vector<char> pixelShaderBuffer(size.QuadPart);
+		DWORD byteReadPS;
+		ReadFile(hFile, pixelShaderBuffer.data(), (DWORD)size.QuadPart, &byteReadPS, nullptr);
+
+		hFile = CreateFile("VertexShader.cso", GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+		GetFileSizeEx(hFile, &size);
+		std::vector<char> vertexShaderBuffer(size.QuadPart);
+		DWORD byteReadVS;
+		ReadFile(hFile, vertexShaderBuffer.data(), (DWORD)size.QuadPart, &byteReadVS, nullptr);
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC desc = {};
+		desc.pRootSignature = m_rootSignature.Get();
+		desc.VS.pShaderBytecode = vertexShaderBuffer.data();
+		desc.VS.BytecodeLength = vertexShaderBuffer.size();
+		desc.PS.pShaderBytecode = pixelShaderBuffer.data();
+		desc.PS.BytecodeLength = pixelShaderBuffer.size();
+		desc.NumRenderTargets = 1;
+		desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+		desc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+		desc.DepthStencilState.DepthEnable = false;
+		desc.DepthStencilState.StencilEnable = false;
+		desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+		desc.InputLayout.NumElements = 1;
+		desc.InputLayout.pInputElementDescs = &inputDesc;
+		desc.SampleDesc.Count = 1;
+		desc.SampleMask = UINT_MAX;
+		desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+		desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+		desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN | D3D12_COLOR_WRITE_ENABLE_BLUE;
+
+		m_device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&m_pipelineState));
+				
+		// Create the vertex buffer.
+		{
+			// Define the geometry for a triangle.
+			float triangleVertices[] =
+			{
+				0.0f, 0.25f, 0.0f,
+				0.25f, -0.25f, 0.0f,
+				-0.25f, -0.25f, 0.0f
+			};
+
+			const UINT vertexBufferSize = sizeof(triangleVertices);
+
+			D3D12_HEAP_PROPERTIES heapProps;
+			heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+			heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+			heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+			heapProps.CreationNodeMask = 0;
+			heapProps.VisibleNodeMask = 0;
+
+			D3D12_RESOURCE_DESC resDesc;
+			resDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+			resDesc.Height = 1;
+			resDesc.DepthOrArraySize = 1;
+			resDesc.MipLevels = 1;
+			resDesc.SampleDesc.Count = 1;
+			resDesc.SampleDesc.Quality = 0;
+			resDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+			resDesc.Width = vertexBufferSize;
+			resDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			resDesc.Format = DXGI_FORMAT_UNKNOWN;
+			resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+			m_device->CreateCommittedResource(
+				&heapProps,
+				D3D12_HEAP_FLAG_NONE,
+				&resDesc,
+				D3D12_RESOURCE_STATE_GENERIC_READ,
+				nullptr,
+				IID_PPV_ARGS(&m_vertexBuffer));
+
+			// Copy the triangle data to the vertex buffer.
+			UINT8* pVertexDataBegin;
+			D3D12_RANGE readRange{ 0, 0 };
+			m_vertexBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pVertexDataBegin));
+			memcpy(pVertexDataBegin, triangleVertices, sizeof(triangleVertices));
+			m_vertexBuffer->Unmap(0, nullptr);
+
+			// Initialize the vertex buffer view.
+			m_vertexBufferView.BufferLocation = m_vertexBuffer->GetGPUVirtualAddress();
+			m_vertexBufferView.StrideInBytes = sizeof(float) * 3;
+			m_vertexBufferView.SizeInBytes = vertexBufferSize;
+		}
 	}
 
 	void Game::CleanD3D()

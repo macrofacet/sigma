@@ -52,6 +52,12 @@ namespace Sigma
 		HANDLE m_haltFenceEvent;
 		ComPtr<ID3D12Fence> m_haltFence;
 		UINT64 m_haltFenceValue;
+
+		ComPtr<ID3D12Resource> m_vertexBuffer;
+		D3D12_VERTEX_BUFFER_VIEW m_vertexBufferView;
+		ComPtr<ID3D12PipelineState> m_pipelineState;
+		ComPtr<ID3D12RootSignature> m_rootSignature;
+
 		int m_windowWidth;
 		int m_windowHeight;
 		int m_bufferWidth;
