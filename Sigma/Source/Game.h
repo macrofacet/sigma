@@ -40,6 +40,7 @@ namespace Sigma
 		ComPtr<ID3D12CommandAllocator> m_commandAllocators[kNumFrames];
 		ComPtr<ID3D12Device1> m_device;
 		ComPtr<ID3D12DescriptorHeap> m_rtvHeap;
+		ComPtr<ID3D12DescriptorHeap> m_srvHeap;
 		ComPtr<ID3D12Resource> m_renderTargets[kNumBuffers];
 		D3D12_CPU_DESCRIPTOR_HANDLE m_renderTargetsHandles[kNumBuffers];
 		int m_currentFrame;
@@ -54,6 +55,8 @@ namespace Sigma
 		UINT64 m_haltFenceValue;
 
 		ComPtr<ID3D12Resource> m_vertexBuffer;
+		ComPtr<ID3D12Resource> m_textureRes;
+
 		D3D12_VERTEX_BUFFER_VIEW m_vertexBufferView;
 		ComPtr<ID3D12PipelineState> m_pipelineState;
 		ComPtr<ID3D12RootSignature> m_rootSignature;

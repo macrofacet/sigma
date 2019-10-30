@@ -2,7 +2,6 @@
 #include "Game.h"
 #include "Defines.h"
 
-
 namespace Sigma {
 
 	Game::Game(std::string title, int width, int height, HINSTANCE hInstance) : 
@@ -173,6 +172,9 @@ namespace Sigma {
 
 		frame.m_commandList->SetPipelineState(m_pipelineState.Get());
 		frame.m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
+		ID3D12DescriptorHeap* ppHeaps[] = { m_srvHeap.Get() };
+		frame.m_commandList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
+		frame.m_commandList->SetGraphicsRootDescriptorTable(0, m_srvHeap->GetGPUDescriptorHandleForHeapStart());
 		frame.m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		frame.m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
 		frame.m_commandList->DrawInstanced(3, 1, 0, 0);
@@ -221,8 +223,8 @@ namespace Sigma {
 		dxgiInfoQueue->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR, true);
 		dxgiInfoQueue->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION, true);
 
-		
-		
+
+
 #endif
 
 		ComPtr<IDXGIFactory3> factory;
@@ -270,7 +272,7 @@ namespace Sigma {
 		}
 		// Create logical device
 		D3D12CreateDevice(selectedAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_device));
-		
+
 		// Create command queue
 		D3D12_COMMAND_QUEUE_DESC commandQueueDesc = {};
 		commandQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
@@ -296,7 +298,7 @@ namespace Sigma {
 
 		ComPtr<IDXGISwapChain1> swapChain1;
 		factory->CreateSwapChainForHwnd(m_commandQueue.Get(), m_hWindow, &swapChainDesc, nullptr, nullptr, swapChain1.GetAddressOf());
-		
+
 		swapChain1.As(&m_swapChain);
 
 		m_swapChain->SetMaximumFrameLatency(kNumFrames);
@@ -326,7 +328,7 @@ namespace Sigma {
 		// so if we want two frames, we need one command allocator for the in-flight frame
 		// and one for the one we are building now
 		for (int i = 0; i < kNumFrames; i++)
-		{			
+		{
 			// Create command allocator
 			m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_commandAllocators[i]));
 
@@ -338,38 +340,79 @@ namespace Sigma {
 		m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_endOfFrameFence));
 		m_lastSubmittedFrameFenceValue = 0;
 		m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-	
+
 		// Special fence whenever we need to wait for the GPU to complete everything so far (including Present)
 		m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_haltFence));
 		m_haltFenceValue = 0;
 		m_haltFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
 		m_currentFrame = m_swapChain->GetCurrentBackBufferIndex();
-		m_frameCounter = 0;		
+		m_frameCounter = 0;
 
 
 
 		// CREATE RESOURCES
 
+
+		D3D12_DESCRIPTOR_RANGE1 descRange = {};
+		descRange.BaseShaderRegister = 0;
+		descRange.RegisterSpace = 0;
+		descRange.NumDescriptors = 1;
+		descRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		descRange.OffsetInDescriptorsFromTableStart = 0;
+		descRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+
+		D3D12_ROOT_PARAMETER1 param = {};
+		param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		param.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+		param.DescriptorTable.NumDescriptorRanges = 1;
+		param.DescriptorTable.pDescriptorRanges = &descRange;
+
+		D3D12_STATIC_SAMPLER_DESC staticSampler = {};
+		staticSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+		staticSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		staticSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		staticSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+		staticSampler.RegisterSpace = 0;
+		staticSampler.ShaderRegister = 0;
+		staticSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
 		D3D12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
 		rootSignatureDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
-		rootSignatureDesc.Desc_1_1.NumParameters = 0;
-		rootSignatureDesc.Desc_1_1.NumStaticSamplers = 0;
 		rootSignatureDesc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+		rootSignatureDesc.Desc_1_1.NumStaticSamplers = 1;
+		rootSignatureDesc.Desc_1_1.pStaticSamplers = &staticSampler;
+		rootSignatureDesc.Desc_1_1.NumParameters = 1;
+		rootSignatureDesc.Desc_1_1.pParameters = &param;
 		ComPtr<ID3DBlob> outputBlob;
 		ComPtr<ID3DBlob> errorBlob;
 		D3D12SerializeVersionedRootSignature(&rootSignatureDesc, &outputBlob, &errorBlob);
+		if (errorBlob != nullptr)
+		{
+			char* buffer = (char*)errorBlob->GetBufferPointer();
+		}
 		m_device->CreateRootSignature(0, outputBlob->GetBufferPointer(), outputBlob->GetBufferSize(), IID_PPV_ARGS(&m_rootSignature));
 
-		D3D12_INPUT_ELEMENT_DESC inputDesc = {};
-		inputDesc.SemanticName = "POSITION";
-		inputDesc.SemanticIndex = 0;
-		inputDesc.Format = DXGI_FORMAT_R32G32B32_FLOAT;
-		inputDesc.InputSlot = 0;
-		inputDesc.AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
-		inputDesc.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
-		inputDesc.InstanceDataStepRate = 0;
-		
+		D3D12_INPUT_ELEMENT_DESC inputDescPos = {};
+		inputDescPos.SemanticName = "POSITION";
+		inputDescPos.SemanticIndex = 0;
+		inputDescPos.Format = DXGI_FORMAT_R32G32B32_FLOAT;
+		inputDescPos.InputSlot = 0;
+		inputDescPos.AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
+		inputDescPos.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+		inputDescPos.InstanceDataStepRate = 0;
+
+		D3D12_INPUT_ELEMENT_DESC inputDescUV = {};
+		inputDescUV.SemanticName = "TEXCOORD";
+		inputDescUV.SemanticIndex = 0;
+		inputDescUV.Format = DXGI_FORMAT_R32G32_FLOAT;
+		inputDescUV.InputSlot = 0;
+		inputDescUV.AlignedByteOffset = D3D12_APPEND_ALIGNED_ELEMENT;
+		inputDescUV.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+		inputDescUV.InstanceDataStepRate = 0;
+
+		D3D12_INPUT_ELEMENT_DESC inputs[] = { inputDescPos, inputDescUV };
+
 		HANDLE hFile = CreateFile("PixelShader.cso", GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
 		LARGE_INTEGER  size;
 		GetFileSizeEx(hFile, &size);
@@ -395,8 +438,8 @@ namespace Sigma {
 		desc.DepthStencilState.DepthEnable = false;
 		desc.DepthStencilState.StencilEnable = false;
 		desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-		desc.InputLayout.NumElements = 1;
-		desc.InputLayout.pInputElementDescs = &inputDesc;
+		desc.InputLayout.NumElements = 2;
+		desc.InputLayout.pInputElementDescs = inputs;
 		desc.SampleDesc.Count = 1;
 		desc.SampleMask = UINT_MAX;
 		desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
@@ -410,9 +453,9 @@ namespace Sigma {
 			// Define the geometry for a triangle.
 			float triangleVertices[] =
 			{
-				0.0f, 0.25f, 0.0f,
-				0.25f, -0.25f, 0.0f,
-				-0.25f, -0.25f, 0.0f
+				0.0f, 0.25f, 0.0f, 0.0f, 0.0f,
+				0.25f, -0.25f, 0.0f, 1.0f, 0.0f,
+				-0.25f, -0.25f, 0.0f, 1.0f, 1.0f,
 			};
 
 			const UINT vertexBufferSize = sizeof(triangleVertices);
@@ -454,8 +497,137 @@ namespace Sigma {
 
 			// Initialize the vertex buffer view.
 			m_vertexBufferView.BufferLocation = m_vertexBuffer->GetGPUVirtualAddress();
-			m_vertexBufferView.StrideInBytes = sizeof(float) * 3;
+			m_vertexBufferView.StrideInBytes = sizeof(float) * 5;
 			m_vertexBufferView.SizeInBytes = vertexBufferSize;
+
+			D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
+			srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+			srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+			srvHeapDesc.NodeMask = 0;
+			srvHeapDesc.NumDescriptors = 1;
+			m_device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&m_srvHeap));
+
+			ComPtr<ID3D12Resource> textureResource;
+
+			D3D12_RESOURCE_DESC texDesc;
+			texDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+			texDesc.Height = 128;
+			texDesc.Width = 128;
+			texDesc.DepthOrArraySize = 1;
+			texDesc.MipLevels = 1;
+			texDesc.SampleDesc.Count = 1;
+			texDesc.SampleDesc.Quality = 0;
+			texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+			texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+			texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+			texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+
+			D3D12_HEAP_PROPERTIES texHeapProps;
+			texHeapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+			texHeapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+			texHeapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+			texHeapProps.CreationNodeMask = 0;
+			texHeapProps.VisibleNodeMask = 0;
+
+			m_device->CreateCommittedResource(
+				&texHeapProps,
+				D3D12_HEAP_FLAG_NONE,
+				&texDesc,
+				D3D12_RESOURCE_STATE_COPY_DEST,
+				nullptr,
+				IID_PPV_ARGS(&m_textureRes));
+
+			{
+				ComPtr<ID3D12Resource> uploadBuffer;
+
+				D3D12_HEAP_PROPERTIES heapProps;
+				heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+				heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+				heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+				heapProps.CreationNodeMask = 0;
+				heapProps.VisibleNodeMask = 0;
+
+				UINT64 uploadBufferSize = 0;
+				m_device->GetCopyableFootprints(&texDesc, 0, 1, 0, nullptr, nullptr, nullptr, &uploadBufferSize);
+
+				D3D12_RESOURCE_DESC bufDesc;
+				bufDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+				bufDesc.Height = 1;
+				bufDesc.DepthOrArraySize = 1;
+				bufDesc.MipLevels = 1;
+				bufDesc.SampleDesc.Count = 1;
+				bufDesc.SampleDesc.Quality = 0;
+				bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+				bufDesc.Width = uploadBufferSize;
+				bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+				bufDesc.Format = DXGI_FORMAT_UNKNOWN;
+				bufDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+				m_device->CreateCommittedResource(
+					&heapProps,
+					D3D12_HEAP_FLAG_NONE,
+					&bufDesc,
+					D3D12_RESOURCE_STATE_GENERIC_READ,
+					nullptr,
+					IID_PPV_ARGS(&uploadBuffer));		
+
+
+				D3D12_SUBRESOURCE_DATA textureData = {};
+				textureData.pData = nullptr; //&texture[0]; // TODO : Generate something
+				textureData.RowPitch = 128 * sizeof(int);
+				textureData.SlicePitch = textureData.RowPitch * 128;
+
+				char* cpuData;
+				uploadBuffer->Map(0, nullptr, (void**)&cpuData);
+				
+				/*// TODO : Copy data to upload buffer
+				for (int i = 0; i < numRows; i++)
+				{
+
+				}
+				*/
+				uploadBuffer->Unmap(0, nullptr);
+
+				// TODO : Copy texture from upload to video memory
+				D3D12_TEXTURE_COPY_LOCATION Dst = {};
+				Dst.pResource = m_textureRes.Get();
+				Dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+				
+				Dst.SubresourceIndex = 0;
+				D3D12_TEXTURE_COPY_LOCATION Src = {};
+				Src.pResource = uploadBuffer.Get();
+				Src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+				Src.SubresourceIndex = 0;				
+
+				Frame frame = GetNewFrame();
+				//frame.m_commandList->CopyTextureRegion(&Dst, 0, 0, 0, &Src, nullptr);
+
+				D3D12_RESOURCE_BARRIER barrier = {};
+				barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+				barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+				barrier.Transition.pResource = m_textureRes.Get();
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+				frame.m_commandList->ResourceBarrier(1, &barrier);
+				frame.m_commandList->Close();
+				ID3D12CommandList* commandLists[] = { frame.m_commandList.Get() };
+				m_commandQueue->ExecuteCommandLists(1, commandLists);
+
+				m_commandQueue->Signal(m_endOfFrameFence.Get(), frame.m_fenceValue);
+
+				WaitForGPU();
+			}
+
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			srvDesc.Texture2D.MipLevels = -1;
+
+			m_device->CreateShaderResourceView(m_textureRes.Get(), &srvDesc, m_srvHeap->GetCPUDescriptorHandleForHeapStart());
+
 		}
 	}
 
