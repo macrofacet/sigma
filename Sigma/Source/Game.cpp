@@ -549,7 +549,10 @@ namespace Sigma {
 				heapProps.VisibleNodeMask = 0;
 
 				UINT64 uploadBufferSize = 0;
-				m_device->GetCopyableFootprints(&texDesc, 0, 1, 0, nullptr, nullptr, nullptr, &uploadBufferSize);
+				D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
+				UINT numRows = 0;
+				UINT64 rowSizeInBytes = 0;
+				m_device->GetCopyableFootprints(&texDesc, 0, 1, 0, &footprint, &numRows, &rowSizeInBytes, &uploadBufferSize);
 
 				D3D12_RESOURCE_DESC bufDesc;
 				bufDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
@@ -573,35 +576,32 @@ namespace Sigma {
 					IID_PPV_ARGS(&uploadBuffer));		
 
 
-				D3D12_SUBRESOURCE_DATA textureData = {};
-				textureData.pData = nullptr; //&texture[0]; // TODO : Generate something
-				textureData.RowPitch = 128 * sizeof(int);
-				textureData.SlicePitch = textureData.RowPitch * 128;
+				std::vector<int> pixels;
+				for (int i = 0; i < 128; i++)
+				{
+					for (int j = 0; j < 128; j++)
+					{
+						pixels.push_back(rand());
+					}
+				}
 
 				char* cpuData;
 				uploadBuffer->Map(0, nullptr, (void**)&cpuData);
-				
-				/*// TODO : Copy data to upload buffer
-				for (int i = 0; i < numRows; i++)
-				{
-
-				}
-				*/
+				cpuData = (char*)pixels.data();				
 				uploadBuffer->Unmap(0, nullptr);
 
-				// TODO : Copy texture from upload to video memory
 				D3D12_TEXTURE_COPY_LOCATION Dst = {};
 				Dst.pResource = m_textureRes.Get();
-				Dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-				
+				Dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
 				Dst.SubresourceIndex = 0;
+
 				D3D12_TEXTURE_COPY_LOCATION Src = {};
 				Src.pResource = uploadBuffer.Get();
-				Src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-				Src.SubresourceIndex = 0;				
+				Src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+				Src.PlacedFootprint = footprint;
 
 				Frame frame = GetNewFrame();
-				//frame.m_commandList->CopyTextureRegion(&Dst, 0, 0, 0, &Src, nullptr);
+				frame.m_commandList->CopyTextureRegion(&Dst, 0, 0, 0, &Src, nullptr);
 
 				D3D12_RESOURCE_BARRIER barrier = {};
 				barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
