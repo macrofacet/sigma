@@ -581,13 +581,19 @@ namespace Sigma {
 				{
 					for (int j = 0; j < 128; j++)
 					{
-						pixels.push_back(rand());
+						pixels.push_back(rand() << 8 | rand());
 					}
 				}
 
-				char* cpuData;
+				int* cpuData;
 				uploadBuffer->Map(0, nullptr, (void**)&cpuData);
-				cpuData = (char*)pixels.data();				
+				for (int i = 0; i < 128; i++)
+				{
+					for (int j = 0; j < 128; j++)
+					{
+						cpuData[i * 128 + j] = pixels[i * 128 + j];
+					}
+				}			
 				uploadBuffer->Unmap(0, nullptr);
 
 				D3D12_TEXTURE_COPY_LOCATION Dst = {};
