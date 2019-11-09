@@ -24,3 +24,6 @@
 #include <dxgidebug.h>
 #define USE_PIX
 #include "pix3.h"
+
+#include <DirectXMath.h>
+#include <wrl.h>
