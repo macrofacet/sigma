@@ -3,6 +3,92 @@
 #include "Defines.h"
 
 namespace Sigma {
+	
+	ID3D12Resource* CreateTexture2D(ComPtr<ID3D12Device> device, int width, int height)
+	{
+		D3D12_RESOURCE_DESC desc;
+		desc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+		desc.Width = width;
+		desc.Height = height;
+		desc.DepthOrArraySize = 1;
+		desc.MipLevels = 1;
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
+		desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+		desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+		desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+		desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+		D3D12_HEAP_PROPERTIES texHeapProps;
+		texHeapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+		texHeapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		texHeapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+		texHeapProps.CreationNodeMask = 0;
+		texHeapProps.VisibleNodeMask = 0;
+
+		ID3D12Resource* resource;
+		device->CreateCommittedResource(
+			&texHeapProps,
+			D3D12_HEAP_FLAG_NONE,
+			&desc,
+			D3D12_RESOURCE_STATE_COPY_DEST,
+			nullptr,
+			IID_PPV_ARGS(&resource));
+		return resource;
+	}
+
+	ID3D12Resource* CreateUploadBuffer(ComPtr<ID3D12Device> device, ComPtr<ID3D12Resource>& resource, D3D12_PLACED_SUBRESOURCE_FOOTPRINT* footprint)
+	{
+		D3D12_HEAP_PROPERTIES heapProps;
+		heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+		heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+		heapProps.CreationNodeMask = 0;
+		heapProps.VisibleNodeMask = 0;
+
+		UINT64 uploadBufferSize = 0;
+		UINT numRows = 0;
+		UINT64 rowSizeInBytes = 0;
+		device->GetCopyableFootprints(&resource->GetDesc(), 0, 1, 0, footprint, &numRows, &rowSizeInBytes, &uploadBufferSize);
+
+		D3D12_RESOURCE_DESC bufDesc;
+		bufDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+		bufDesc.Height = 1;
+		bufDesc.DepthOrArraySize = 1;
+		bufDesc.MipLevels = 1;
+		bufDesc.SampleDesc.Count = 1;
+		bufDesc.SampleDesc.Quality = 0;
+		bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+		bufDesc.Width = uploadBufferSize;
+		bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+		bufDesc.Format = DXGI_FORMAT_UNKNOWN;
+		bufDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+		ID3D12Resource* uploadBuffer;
+		device->CreateCommittedResource(
+			&heapProps,
+			D3D12_HEAP_FLAG_NONE,
+			&bufDesc,
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr,
+			IID_PPV_ARGS(&uploadBuffer));	
+		return uploadBuffer;
+	}
+
+
+	void FillBuffer(ComPtr<ID3D12Resource>& buffer, ComPtr<ID3D12Resource>& resource, unsigned pitchInBytes, char* data)
+	{
+		auto desc = resource->GetDesc();
+		char* cpuData;
+		buffer->Map(0, nullptr, (void**)&cpuData);
+		for (unsigned i = 0; i < desc.Height; i++)
+		{
+			memcpy(cpuData, data, desc.Width * 4);
+			cpuData += pitchInBytes;
+			data += desc.Width;
+		}
+		buffer->Unmap(0, nullptr);
+	}
 
 	Game::Game(std::string title, int width, int height, HINSTANCE hInstance) : 
 		m_title(title), 
@@ -222,9 +308,6 @@ namespace Sigma {
 		DXGIGetDebugInterface1(0, IID_PPV_ARGS(&dxgiInfoQueue));
 		dxgiInfoQueue->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR, true);
 		dxgiInfoQueue->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION, true);
-
-
-
 #endif
 
 		ComPtr<IDXGIFactory3> factory;
@@ -278,6 +361,15 @@ namespace Sigma {
 		commandQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
 		commandQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 		m_device->CreateCommandQueue(&commandQueueDesc, IID_PPV_ARGS(&m_commandQueue));
+
+
+		D3D12_COMMAND_QUEUE_DESC copyQueueDesc = {};
+		copyQueueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+		copyQueueDesc.Type = D3D12_COMMAND_LIST_TYPE_COPY;
+		m_device->CreateCommandQueue(&copyQueueDesc, IID_PPV_ARGS(&m_copyQueue));
+		m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_COPY, IID_PPV_ARGS(&m_copyCommandAllocator));
+		m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_COPY, m_copyCommandAllocator.Get(), nullptr, IID_PPV_ARGS(&m_copyCommandList));
+
 
 		// Create swap chain, aiming for minimum latency with a waitable object and two frame buffer
 		m_bufferWidth = m_windowWidth;
@@ -352,7 +444,18 @@ namespace Sigma {
 
 
 		// CREATE RESOURCES
-
+		/*
+		D3D12_HEAP_DESC heapDesc = {};
+		heapDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+		heapDesc.SizeInBytes = 128 * 1024 * 1024; // 128 Mb
+		heapDesc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
+		heapDesc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		heapDesc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+		heapDesc.Properties.VisibleNodeMask = 0;
+		heapDesc.Properties.CreationNodeMask = 0;
+		
+		m_device->CreateHeap(&heapDesc, IID_PPV_ARGS(&m_heap));
+		*/
 
 		D3D12_DESCRIPTOR_RANGE1 descRange = {};
 		descRange.BaseShaderRegister = 0;
@@ -507,74 +610,11 @@ namespace Sigma {
 			srvHeapDesc.NumDescriptors = 1;
 			m_device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&m_srvHeap));
 
-			ComPtr<ID3D12Resource> textureResource;
-
-			D3D12_RESOURCE_DESC texDesc;
-			texDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
-			texDesc.Height = 128;
-			texDesc.Width = 128;
-			texDesc.DepthOrArraySize = 1;
-			texDesc.MipLevels = 1;
-			texDesc.SampleDesc.Count = 1;
-			texDesc.SampleDesc.Quality = 0;
-			texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-			texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-			texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-			texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-
-
-			D3D12_HEAP_PROPERTIES texHeapProps;
-			texHeapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
-			texHeapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-			texHeapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-			texHeapProps.CreationNodeMask = 0;
-			texHeapProps.VisibleNodeMask = 0;
-
-			m_device->CreateCommittedResource(
-				&texHeapProps,
-				D3D12_HEAP_FLAG_NONE,
-				&texDesc,
-				D3D12_RESOURCE_STATE_COPY_DEST,
-				nullptr,
-				IID_PPV_ARGS(&m_textureRes));
+			m_textureRes = CreateTexture2D(m_device, 128, 128);
 
 			{
-				ComPtr<ID3D12Resource> uploadBuffer;
-
-				D3D12_HEAP_PROPERTIES heapProps;
-				heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
-				heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-				heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-				heapProps.CreationNodeMask = 0;
-				heapProps.VisibleNodeMask = 0;
-
-				UINT64 uploadBufferSize = 0;
 				D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
-				UINT numRows = 0;
-				UINT64 rowSizeInBytes = 0;
-				m_device->GetCopyableFootprints(&texDesc, 0, 1, 0, &footprint, &numRows, &rowSizeInBytes, &uploadBufferSize);
-
-				D3D12_RESOURCE_DESC bufDesc;
-				bufDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
-				bufDesc.Height = 1;
-				bufDesc.DepthOrArraySize = 1;
-				bufDesc.MipLevels = 1;
-				bufDesc.SampleDesc.Count = 1;
-				bufDesc.SampleDesc.Quality = 0;
-				bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-				bufDesc.Width = uploadBufferSize;
-				bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-				bufDesc.Format = DXGI_FORMAT_UNKNOWN;
-				bufDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-
-				m_device->CreateCommittedResource(
-					&heapProps,
-					D3D12_HEAP_FLAG_NONE,
-					&bufDesc,
-					D3D12_RESOURCE_STATE_GENERIC_READ,
-					nullptr,
-					IID_PPV_ARGS(&uploadBuffer));		
-
+				ComPtr<ID3D12Resource> uploadBuffer = CreateUploadBuffer(m_device, m_textureRes, &footprint);
 
 				std::vector<int> pixels;
 				for (int i = 0; i < 128; i++)
@@ -585,16 +625,7 @@ namespace Sigma {
 					}
 				}
 
-				int* cpuData;
-				uploadBuffer->Map(0, nullptr, (void**)&cpuData);
-				for (int i = 0; i < 128; i++)
-				{
-					for (int j = 0; j < 128; j++)
-					{
-						cpuData[i * 128 + j] = pixels[i * 128 + j];
-					}
-				}			
-				uploadBuffer->Unmap(0, nullptr);
+				FillBuffer(uploadBuffer, m_textureRes, footprint.Footprint.RowPitch, (char*)pixels.data());
 
 				D3D12_TEXTURE_COPY_LOCATION Dst = {};
 				Dst.pResource = m_textureRes.Get();
@@ -606,24 +637,31 @@ namespace Sigma {
 				Src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
 				Src.PlacedFootprint = footprint;
 
-				Frame frame = GetNewFrame();
-				frame.m_commandList->CopyTextureRegion(&Dst, 0, 0, 0, &Src, nullptr);
+				m_copyCommandList->CopyTextureRegion(&Dst, 0, 0, 0, &Src, nullptr);
+				m_copyCommandList->Close();
+				ID3D12CommandList* commandLists[] = { m_copyCommandList.Get() };
+				m_copyQueue->ExecuteCommandLists(1, commandLists);
 
-				D3D12_RESOURCE_BARRIER barrier = {};
-				barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-				barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-				barrier.Transition.pResource = m_textureRes.Get();
-				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-				barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-				frame.m_commandList->ResourceBarrier(1, &barrier);
-				frame.m_commandList->Close();
-				ID3D12CommandList* commandLists[] = { frame.m_commandList.Get() };
-				m_commandQueue->ExecuteCommandLists(1, commandLists);
+				WaitForGPUCopy();
+				m_copyCommandAllocator->Reset();
+				m_copyCommandList->Reset(m_copyCommandAllocator.Get(), nullptr);
 
-				m_commandQueue->Signal(m_endOfFrameFence.Get(), frame.m_fenceValue);
-
-				WaitForGPU();
+				{
+					// This could be done at the beginning of the next "real" frame instead of here
+					auto frame = GetNewFrame();
+					D3D12_RESOURCE_BARRIER barrier = {};
+					barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+					barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+					barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+					barrier.Transition.pResource = m_textureRes.Get();
+					barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+					barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+					frame.m_commandList->ResourceBarrier(1, &barrier);
+					frame.m_commandList->Close();
+					ID3D12CommandList* commandLists[] = { frame.m_commandList.Get() };
+					m_commandQueue->ExecuteCommandLists(1, commandLists);
+					m_commandQueue->Signal(m_endOfFrameFence.Get(), frame.m_fenceValue);
+				}
 			}
 
 			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -640,6 +678,7 @@ namespace Sigma {
 	void Game::CleanD3D()
 	{
 		WaitForGPU();
+		WaitForGPUCopy();
 	}
 
 	void Game::ResizeSwapChainBuffers()
@@ -685,6 +724,18 @@ namespace Sigma {
 	void Game::WaitForGPU()
 	{
 		m_commandQueue->Signal(m_haltFence.Get(), ++m_haltFenceValue);
+		auto currentValue = m_haltFence->GetCompletedValue();
+		if (currentValue < m_haltFenceValue)
+		{
+			m_haltFence->SetEventOnCompletion(m_haltFenceValue, m_haltFenceEvent);
+			WaitForSingleObject(m_haltFenceEvent, INFINITE);
+			PIXNotifyWakeFromFenceSignal(m_haltFenceEvent);
+		}
+	}
+
+	void Game::WaitForGPUCopy()
+	{
+		m_copyQueue->Signal(m_haltFence.Get(), ++m_haltFenceValue);
 		auto currentValue = m_haltFence->GetCompletedValue();
 		if (currentValue < m_haltFenceValue)
 		{

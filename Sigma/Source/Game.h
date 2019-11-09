@@ -1,9 +1,8 @@
 #pragma once
 
 #include "stdafx.h"
-#include <DirectXMath.h>
-#include <wrl.h>
 #include <vector>
+#include "Allocator.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -37,6 +36,9 @@ namespace Sigma
 		ComPtr<IDXGISwapChain3> m_swapChain;
 		ComPtr<ID3D12GraphicsCommandList> m_commandLists[kNumFrames];
 		ComPtr<ID3D12CommandQueue> m_commandQueue;
+		ComPtr<ID3D12CommandQueue> m_copyQueue;
+		ComPtr<ID3D12CommandAllocator> m_copyCommandAllocator;
+		ComPtr<ID3D12GraphicsCommandList> m_copyCommandList;
 		ComPtr<ID3D12CommandAllocator> m_commandAllocators[kNumFrames];
 		ComPtr<ID3D12Device1> m_device;
 		ComPtr<ID3D12DescriptorHeap> m_rtvHeap;
@@ -65,6 +67,9 @@ namespace Sigma
 		int m_windowHeight;
 		int m_bufferWidth;
 		int m_bufferHeight;
+		
+		ComPtr<ID3D12Heap> m_heap;
+		std::unique_ptr<LinearAllocator> m_allocator;
 
 	private:
 		void SetupWindow();
@@ -74,6 +79,7 @@ namespace Sigma
 
 		void ResizeSwapChainBuffers();
 		void WaitForGPU();
+		void WaitForGPUCopy();
 
 		Frame GetNewFrame();
 		void GameLoop();
