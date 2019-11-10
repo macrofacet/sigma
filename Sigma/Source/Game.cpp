@@ -4,7 +4,7 @@
 
 namespace Sigma {
 	
-	ID3D12Resource* CreateTexture2D(ComPtr<ID3D12Device> device, int width, int height)
+	ID3D12Resource* CreateTexture2D(ID3D12Device* device, int width, int height)
 	{
 		D3D12_RESOURCE_DESC desc;
 		desc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
@@ -37,7 +37,7 @@ namespace Sigma {
 		return resource;
 	}
 
-	ID3D12Resource* CreateUploadBuffer(ComPtr<ID3D12Device> device, ComPtr<ID3D12Resource>& resource, D3D12_PLACED_SUBRESOURCE_FOOTPRINT* footprint)
+	ID3D12Resource* CreateUploadBuffer(ID3D12Device* device, ID3D12Resource* resource, D3D12_PLACED_SUBRESOURCE_FOOTPRINT* footprint)
 	{
 		D3D12_HEAP_PROPERTIES heapProps;
 		heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -76,7 +76,7 @@ namespace Sigma {
 	}
 
 
-	void FillBuffer(ComPtr<ID3D12Resource>& buffer, ComPtr<ID3D12Resource>& resource, unsigned pitchInBytes, char* data)
+	void FillBuffer(ID3D12Resource* buffer, ID3D12Resource* resource, unsigned pitchInBytes, char* data)
 	{
 		auto desc = resource->GetDesc();
 		char* cpuData;
@@ -610,11 +610,12 @@ namespace Sigma {
 			srvHeapDesc.NumDescriptors = 1;
 			m_device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&m_srvHeap));
 
-			m_textureRes = CreateTexture2D(m_device, 128, 128);
+			m_textureRes.Attach(CreateTexture2D(m_device.Get(), 128, 128));
 
 			{
 				D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
-				ComPtr<ID3D12Resource> uploadBuffer = CreateUploadBuffer(m_device, m_textureRes, &footprint);
+				ComPtr<ID3D12Resource> uploadBuffer;
+				uploadBuffer.Attach(CreateUploadBuffer(m_device.Get(), m_textureRes.Get(), &footprint));
 
 				std::vector<int> pixels;
 				for (int i = 0; i < 128; i++)
@@ -625,7 +626,7 @@ namespace Sigma {
 					}
 				}
 
-				FillBuffer(uploadBuffer, m_textureRes, footprint.Footprint.RowPitch, (char*)pixels.data());
+				FillBuffer(uploadBuffer.Get(), m_textureRes.Get(), footprint.Footprint.RowPitch, (char*)pixels.data());
 
 				D3D12_TEXTURE_COPY_LOCATION Dst = {};
 				Dst.pResource = m_textureRes.Get();
