@@ -457,6 +457,18 @@ namespace Sigma {
 		m_device->CreateHeap(&heapDesc, IID_PPV_ARGS(&m_heap));
 		*/
 
+		D3D12_HEAP_DESC uploadHeapDesc = {};
+		uploadHeapDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+		uploadHeapDesc.SizeInBytes = 128 * 1024 * 1024; // 128 Mb
+		uploadHeapDesc.Properties.Type = D3D12_HEAP_TYPE_UPLOAD;
+		uploadHeapDesc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+		uploadHeapDesc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+		uploadHeapDesc.Properties.VisibleNodeMask = 0;
+		uploadHeapDesc.Properties.CreationNodeMask = 0;
+
+		m_device->CreateHeap(&uploadHeapDesc, IID_PPV_ARGS(&m_uploadHeap));
+		m_uploadAllocator = std::make_unique<LinearAllocator>(m_device, m_uploadHeap);
+
 		D3D12_DESCRIPTOR_RANGE1 descRange = {};
 		descRange.BaseShaderRegister = 0;
 		descRange.RegisterSpace = 0;
@@ -563,12 +575,6 @@ namespace Sigma {
 
 			const UINT vertexBufferSize = sizeof(triangleVertices);
 
-			D3D12_HEAP_PROPERTIES heapProps;
-			heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
-			heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-			heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-			heapProps.CreationNodeMask = 0;
-			heapProps.VisibleNodeMask = 0;
 
 			D3D12_RESOURCE_DESC resDesc;
 			resDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
@@ -583,26 +589,91 @@ namespace Sigma {
 			resDesc.Format = DXGI_FORMAT_UNKNOWN;
 			resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
+
+			ComPtr<ID3D12Resource> uploadBuffer;
+
+			D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
+			UINT64 uploadBufferSize;
+			UINT numRows;
+			UINT64 rowSizeInBytes;
+
+			m_device->GetCopyableFootprints(&resDesc, 0, 1, 0, &footprint, &numRows, &rowSizeInBytes, &uploadBufferSize);
+
+			D3D12_RESOURCE_DESC copyBufDesc;
+			copyBufDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+			copyBufDesc.Height = 1;
+			copyBufDesc.DepthOrArraySize = 1;
+			copyBufDesc.MipLevels = 1;
+			copyBufDesc.SampleDesc.Count = 1;
+			copyBufDesc.SampleDesc.Quality = 0;
+			copyBufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+			copyBufDesc.Width = uploadBufferSize;
+			copyBufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			copyBufDesc.Format = DXGI_FORMAT_UNKNOWN;
+			copyBufDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+			uploadBuffer.Attach(m_uploadAllocator->Allocate(&copyBufDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr));
+
+			
+			D3D12_HEAP_PROPERTIES heapProps;
+			heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+			heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+			heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+			heapProps.CreationNodeMask = 0;
+			heapProps.VisibleNodeMask = 0;
+
 			m_device->CreateCommittedResource(
 				&heapProps,
 				D3D12_HEAP_FLAG_NONE,
 				&resDesc,
-				D3D12_RESOURCE_STATE_GENERIC_READ,
+				D3D12_RESOURCE_STATE_COPY_DEST,
 				nullptr,
 				IID_PPV_ARGS(&m_vertexBuffer));
 
 			// Copy the triangle data to the vertex buffer.
 			UINT8* pVertexDataBegin;
 			D3D12_RANGE readRange{ 0, 0 };
-			m_vertexBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pVertexDataBegin));
+			uploadBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pVertexDataBegin));
 			memcpy(pVertexDataBegin, triangleVertices, sizeof(triangleVertices));
-			m_vertexBuffer->Unmap(0, nullptr);
+			uploadBuffer->Unmap(0, nullptr);
+
+
+			m_copyCommandList->CopyBufferRegion(m_vertexBuffer.Get(), 0, uploadBuffer.Get(), 0, uploadBufferSize);
+			m_copyCommandList->Close();
+			ID3D12CommandList* commandLists[] = { m_copyCommandList.Get() };
+			m_copyQueue->ExecuteCommandLists(1, commandLists);
+
+			WaitForGPUCopy();
+
+			m_uploadAllocator->Reset();
+			m_copyCommandAllocator->Reset();
+			m_copyCommandList->Reset(m_copyCommandAllocator.Get(), nullptr);
+
+			{
+				// This could be done at the beginning of the next "real" frame instead of here
+				m_commandLists[0]->Reset(m_commandAllocators[0].Get(), nullptr);
+				D3D12_RESOURCE_BARRIER barrier = {};
+				barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+				barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+				barrier.Transition.pResource = m_vertexBuffer.Get();
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+				m_commandLists[0]->ResourceBarrier(1, &barrier);
+				m_commandLists[0]->Close();
+				ID3D12CommandList* commandLists[] = { m_commandLists[0].Get() };
+				m_commandQueue->ExecuteCommandLists(1, commandLists);
+			}
+
 
 			// Initialize the vertex buffer view.
 			m_vertexBufferView.BufferLocation = m_vertexBuffer->GetGPUVirtualAddress();
 			m_vertexBufferView.StrideInBytes = sizeof(float) * 5;
 			m_vertexBufferView.SizeInBytes = vertexBufferSize;
+		}
 
+		// Create Texture
+		{
 			D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
 			srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 			srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
@@ -612,57 +683,77 @@ namespace Sigma {
 
 			m_textureRes.Attach(CreateTexture2D(m_device.Get(), 128, 128));
 
+			ComPtr<ID3D12Resource> uploadBuffer;
+
+			D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
+			UINT64 uploadBufferSize;
+			UINT numRows;
+			UINT64 rowSizeInBytes;
+				
+			m_device->GetCopyableFootprints(&m_textureRes->GetDesc(), 0, 1, 0, &footprint, &numRows, &rowSizeInBytes, &uploadBufferSize);
+
+			D3D12_RESOURCE_DESC bufDesc;
+			bufDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+			bufDesc.Height = 1;
+			bufDesc.DepthOrArraySize = 1;
+			bufDesc.MipLevels = 1;
+			bufDesc.SampleDesc.Count = 1;
+			bufDesc.SampleDesc.Quality = 0;
+			bufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+			bufDesc.Width = uploadBufferSize;
+			bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+			bufDesc.Format = DXGI_FORMAT_UNKNOWN;
+			bufDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+				
+			uploadBuffer.Attach(m_uploadAllocator->Allocate(&bufDesc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr));
+
+			std::vector<int> pixels;
+			for (int i = 0; i < 128; i++)
 			{
-				D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
-				ComPtr<ID3D12Resource> uploadBuffer;
-				uploadBuffer.Attach(CreateUploadBuffer(m_device.Get(), m_textureRes.Get(), &footprint));
-
-				std::vector<int> pixels;
-				for (int i = 0; i < 128; i++)
+				for (int j = 0; j < 128; j++)
 				{
-					for (int j = 0; j < 128; j++)
-					{
-						pixels.push_back(rand() << 8 | rand());
-					}
+					pixels.push_back(rand() << 8 | rand());
 				}
+			}
 
-				FillBuffer(uploadBuffer.Get(), m_textureRes.Get(), footprint.Footprint.RowPitch, (char*)pixels.data());
+			FillBuffer(uploadBuffer.Get(), m_textureRes.Get(), footprint.Footprint.RowPitch, (char*)pixels.data());
 
-				D3D12_TEXTURE_COPY_LOCATION Dst = {};
-				Dst.pResource = m_textureRes.Get();
-				Dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-				Dst.SubresourceIndex = 0;
+			D3D12_TEXTURE_COPY_LOCATION Dst = {};
+			Dst.pResource = m_textureRes.Get();
+			Dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+			Dst.SubresourceIndex = 0;
 
-				D3D12_TEXTURE_COPY_LOCATION Src = {};
-				Src.pResource = uploadBuffer.Get();
-				Src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-				Src.PlacedFootprint = footprint;
+			D3D12_TEXTURE_COPY_LOCATION Src = {};
+			Src.pResource = uploadBuffer.Get();
+			Src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+			Src.PlacedFootprint = footprint;
 
-				m_copyCommandList->CopyTextureRegion(&Dst, 0, 0, 0, &Src, nullptr);
-				m_copyCommandList->Close();
-				ID3D12CommandList* commandLists[] = { m_copyCommandList.Get() };
-				m_copyQueue->ExecuteCommandLists(1, commandLists);
+			m_copyCommandList->CopyTextureRegion(&Dst, 0, 0, 0, &Src, nullptr);
+			m_copyCommandList->Close();
+			ID3D12CommandList* commandLists[] = { m_copyCommandList.Get() };
+			m_copyQueue->ExecuteCommandLists(1, commandLists);
 
-				WaitForGPUCopy();
-				m_copyCommandAllocator->Reset();
-				m_copyCommandList->Reset(m_copyCommandAllocator.Get(), nullptr);
+			WaitForGPUCopy();
 
-				{
-					// This could be done at the beginning of the next "real" frame instead of here
-					auto frame = GetNewFrame();
-					D3D12_RESOURCE_BARRIER barrier = {};
-					barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-					barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-					barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-					barrier.Transition.pResource = m_textureRes.Get();
-					barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-					barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-					frame.m_commandList->ResourceBarrier(1, &barrier);
-					frame.m_commandList->Close();
-					ID3D12CommandList* commandLists[] = { frame.m_commandList.Get() };
-					m_commandQueue->ExecuteCommandLists(1, commandLists);
-					m_commandQueue->Signal(m_endOfFrameFence.Get(), frame.m_fenceValue);
-				}
+			m_uploadAllocator->Reset();
+			m_copyCommandAllocator->Reset();
+			m_copyCommandList->Reset(m_copyCommandAllocator.Get(), nullptr);
+
+			{
+
+				m_commandLists[0]->Reset(m_commandAllocators[0].Get(), nullptr);
+				// This could be done at the beginning of the next "real" frame instead of here
+				D3D12_RESOURCE_BARRIER barrier = {};
+				barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+				barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+				barrier.Transition.pResource = m_textureRes.Get();
+				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+				barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+				m_commandLists[0]->ResourceBarrier(1, &barrier);
+				m_commandLists[0]->Close();
+				ID3D12CommandList* commandLists[] = { m_commandLists[0].Get() };
+				m_commandQueue->ExecuteCommandLists(1, commandLists);
 			}
 
 			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
@@ -672,8 +763,9 @@ namespace Sigma {
 			srvDesc.Texture2D.MipLevels = -1;
 
 			m_device->CreateShaderResourceView(m_textureRes.Get(), &srvDesc, m_srvHeap->GetCPUDescriptorHandleForHeapStart());
-
 		}
+
+		WaitForGPU();
 	}
 
 	void Game::CleanD3D()

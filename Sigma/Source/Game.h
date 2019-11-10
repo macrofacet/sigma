@@ -68,8 +68,9 @@ namespace Sigma
 		int m_bufferWidth;
 		int m_bufferHeight;
 		
+		ComPtr<ID3D12Heap> m_uploadHeap;
+		std::unique_ptr<LinearAllocator> m_uploadAllocator;
 		ComPtr<ID3D12Heap> m_heap;
-		std::unique_ptr<LinearAllocator> m_allocator;
 
 	private:
 		void SetupWindow();

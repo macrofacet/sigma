@@ -11,11 +11,11 @@ public:
 	{
 	}
 
-	ComPtr<ID3D12Resource> Allocate(const D3D12_RESOURCE_DESC* desc, D3D12_RESOURCE_STATES states, const D3D12_CLEAR_VALUE* pOptimizedClearValue)
+	ID3D12Resource* Allocate(const D3D12_RESOURCE_DESC* desc, D3D12_RESOURCE_STATES states, const D3D12_CLEAR_VALUE* pOptimizedClearValue)
 	{
 		D3D12_RESOURCE_ALLOCATION_INFO info = m_device->GetResourceAllocationInfo(0, 1, desc);
-		
-		ComPtr<ID3D12Resource> resource;
+
+		ID3D12Resource* resource;
 		m_offset = (m_offset + info.Alignment - 1) & ~(info.Alignment - 1);
 		m_device->CreatePlacedResource(m_heap.Get(), m_offset, desc, states, pOptimizedClearValue, IID_PPV_ARGS(&resource));
 		m_offset += info.SizeInBytes;
