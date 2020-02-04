@@ -69,7 +69,7 @@ namespace Sigma
 		int m_bufferHeight;
 		
 		ComPtr<ID3D12Heap> m_uploadHeap;
-		std::unique_ptr<LinearAllocator> m_uploadAllocator;
+		std::unique_ptr<LinearHeapAllocator> m_uploadAllocator;
 		ComPtr<ID3D12Heap> m_heap;
 
 	private:

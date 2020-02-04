@@ -467,7 +467,7 @@ namespace Sigma {
 		uploadHeapDesc.Properties.CreationNodeMask = 0;
 
 		m_device->CreateHeap(&uploadHeapDesc, IID_PPV_ARGS(&m_uploadHeap));
-		m_uploadAllocator = std::make_unique<LinearAllocator>(m_device, m_uploadHeap);
+		m_uploadAllocator = std::make_unique<LinearHeapAllocator>(m_device, m_uploadHeap);
 
 		D3D12_DESCRIPTOR_RANGE1 descRange = {};
 		descRange.BaseShaderRegister = 0;
