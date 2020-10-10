@@ -37,6 +37,7 @@ namespace Sigma {
 		return resource;
 	}
 
+
 	ID3D12Resource* CreateUploadBuffer(ID3D12Device* device, ID3D12Resource* resource, D3D12_PLACED_SUBRESOURCE_FOOTPRINT* footprint)
 	{
 		D3D12_HEAP_PROPERTIES heapProps;
@@ -75,6 +76,7 @@ namespace Sigma {
 		return uploadBuffer;
 	}
 
+	const uint32_t kNumSRV = 128;
 
 	void FillBuffer(ID3D12Resource* buffer, ID3D12Resource* resource, unsigned pitchInBytes, char* data)
 	{
@@ -459,7 +461,7 @@ namespace Sigma {
 
 		D3D12_HEAP_DESC uploadHeapDesc = {};
 		uploadHeapDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
-		uploadHeapDesc.SizeInBytes = 128 * 1024 * 1024; // 128 Mb
+		uploadHeapDesc.SizeInBytes = 128 * 1024 * 1024; // 128 MiB
 		uploadHeapDesc.Properties.Type = D3D12_HEAP_TYPE_UPLOAD;
 		uploadHeapDesc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
 		uploadHeapDesc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
@@ -469,19 +471,34 @@ namespace Sigma {
 		m_device->CreateHeap(&uploadHeapDesc, IID_PPV_ARGS(&m_uploadHeap));
 		m_uploadAllocator = std::make_unique<LinearHeapAllocator>(m_device, m_uploadHeap);
 
+
 		D3D12_DESCRIPTOR_RANGE1 descRange = {};
 		descRange.BaseShaderRegister = 0;
 		descRange.RegisterSpace = 0;
-		descRange.NumDescriptors = 1;
+		descRange.NumDescriptors = kNumSRV;
 		descRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 		descRange.OffsetInDescriptorsFromTableStart = 0;
 		descRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
 
 		D3D12_ROOT_PARAMETER1 param = {};
 		param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-		param.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+		param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 		param.DescriptorTable.NumDescriptorRanges = 1;
 		param.DescriptorTable.pDescriptorRanges = &descRange;
+
+		D3D12_DESCRIPTOR_RANGE1 descRange1 = {};
+		descRange1.BaseShaderRegister = 0;
+		descRange1.RegisterSpace = 0;
+		descRange1.NumDescriptors = 1;
+		descRange1.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
+		descRange1.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+		descRange1.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+
+		D3D12_ROOT_PARAMETER1 param1 = {};
+		param1.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		param1.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+		param1.DescriptorTable.NumDescriptorRanges = 1;
+		param1.DescriptorTable.pDescriptorRanges = &descRange1;
 
 		D3D12_STATIC_SAMPLER_DESC staticSampler = {};
 		staticSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -490,15 +507,16 @@ namespace Sigma {
 		staticSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 		staticSampler.RegisterSpace = 0;
 		staticSampler.ShaderRegister = 0;
-		staticSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+		staticSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
 		D3D12_VERSIONED_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
 		rootSignatureDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
 		rootSignatureDesc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 		rootSignatureDesc.Desc_1_1.NumStaticSamplers = 1;
 		rootSignatureDesc.Desc_1_1.pStaticSamplers = &staticSampler;
-		rootSignatureDesc.Desc_1_1.NumParameters = 1;
-		rootSignatureDesc.Desc_1_1.pParameters = &param;
+		rootSignatureDesc.Desc_1_1.NumParameters = 2;
+		D3D12_ROOT_PARAMETER1 params[2] = { param, param1 };
+		rootSignatureDesc.Desc_1_1.pParameters = params;
 		ComPtr<ID3DBlob> outputBlob;
 		ComPtr<ID3DBlob> errorBlob;
 		D3D12SerializeVersionedRootSignature(&rootSignatureDesc, &outputBlob, &errorBlob);
@@ -678,7 +696,7 @@ namespace Sigma {
 			srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 			srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 			srvHeapDesc.NodeMask = 0;
-			srvHeapDesc.NumDescriptors = 1;
+			srvHeapDesc.NumDescriptors = kNumSRV + 1;
 			m_device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&m_srvHeap));
 
 			m_textureRes.Attach(CreateTexture2D(m_device.Get(), 128, 128));
@@ -746,7 +764,7 @@ namespace Sigma {
 				D3D12_RESOURCE_BARRIER barrier = {};
 				barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 				barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-				barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+				barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 				barrier.Transition.pResource = m_textureRes.Get();
 				barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 				barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
@@ -763,6 +781,76 @@ namespace Sigma {
 			srvDesc.Texture2D.MipLevels = -1;
 
 			m_device->CreateShaderResourceView(m_textureRes.Get(), &srvDesc, m_srvHeap->GetCPUDescriptorHandleForHeapStart());
+
+			// Null Descriptors
+			for (uint32_t i = 1; i < kNumSRV; i++)
+			{
+				D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+				srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+				srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+				srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+				srvDesc.Texture2D.MipLevels = -1;
+
+				D3D12_CPU_DESCRIPTOR_HANDLE nullSrvHandle;
+				nullSrvHandle.ptr = m_srvHeap->GetCPUDescriptorHandleForHeapStart().ptr + i * m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+				m_device->CreateShaderResourceView(nullptr, &srvDesc, nullSrvHandle);
+			}
+
+			// Create constant buffer
+
+			struct DrawConstantBuffer
+			{
+				int TextureIndex;
+			};
+
+			{
+				D3D12_RESOURCE_DESC resDesc;
+				resDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+				resDesc.Height = 1;
+				resDesc.DepthOrArraySize = 1;
+				resDesc.MipLevels = 1;
+				resDesc.SampleDesc.Count = 1;
+				resDesc.SampleDesc.Quality = 0;
+				resDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+				resDesc.Width = (sizeof(DrawConstantBuffer) + 255) & ~255; // align to 256 bytes
+				resDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+				resDesc.Format = DXGI_FORMAT_UNKNOWN;
+				resDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+				D3D12_HEAP_PROPERTIES heapProps;
+				heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+				heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+				heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+				heapProps.CreationNodeMask = 0;
+				heapProps.VisibleNodeMask = 0;
+
+				m_device->CreateCommittedResource(
+					&heapProps,
+					D3D12_HEAP_FLAG_NONE,
+					&resDesc,
+					D3D12_RESOURCE_STATE_GENERIC_READ,
+					nullptr,
+					IID_PPV_ARGS(&m_ConstantBuffer));
+
+
+				DrawConstantBuffer ConstantBuffer;
+				ConstantBuffer.TextureIndex = 0;
+
+				UINT8* pConstantDataBegin;
+				D3D12_RANGE readRange{ 0, 0 };
+				m_ConstantBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pConstantDataBegin));
+				memcpy(pConstantDataBegin, &ConstantBuffer, sizeof(DrawConstantBuffer));
+				m_ConstantBuffer->Unmap(0, nullptr);
+
+				D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc;
+				cbvDesc.BufferLocation = m_ConstantBuffer->GetGPUVirtualAddress();
+				cbvDesc.SizeInBytes = (sizeof(DrawConstantBuffer) + 255) & ~255; // align to 256 bytes
+
+				D3D12_CPU_DESCRIPTOR_HANDLE cbvHandle;
+				cbvHandle.ptr = m_srvHeap->GetCPUDescriptorHandleForHeapStart().ptr + kNumSRV * m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+				m_device->CreateConstantBufferView(&cbvDesc, cbvHandle);
+			}
 		}
 
 		WaitForGPU();

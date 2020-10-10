@@ -57,6 +57,7 @@ namespace Sigma
 		UINT64 m_haltFenceValue;
 
 		ComPtr<ID3D12Resource> m_vertexBuffer;
+		ComPtr<ID3D12Resource> m_ConstantBuffer;
 		ComPtr<ID3D12Resource> m_textureRes;
 
 		D3D12_VERTEX_BUFFER_VIEW m_vertexBufferView;
